@@ -1,0 +1,199 @@
+#!/bin/bash
+
+set -o errexit
+shopt -s expand_aliases
+shopt -s extglob
+
+# Verify that necessary dependencies are available.
+if ! $(curl -V >/dev/null)
+then
+    echo "This program requires a functioning \`curl\` that can validate"
+    echo "SSL certificates. This should be available from your local package"
+    echo "management systsem."
+fi
+
+if ! $(json --version >/dev/null)
+then
+    echo "This program requires jsontool, a node.js program available from npm."
+    (node --version 2>&1>/dev/null) || \
+    echo "Node.js is available from your local package manager or http://www.nodejs.org/."
+    (npm help 2>&1>/dev/null) || \
+    echo "npm is available from your local package manager or http://www.npm.org/."
+    echo "Run \`npm install -g jsontool\`"
+fi
+
+##
+## Curl Options
+##
+# * Force IPv4. If the protocol changes between subsequent requests the auth token will
+#   be invalid.
+# * Be silent.
+# * Require API version 3.5.1.
+alias curl='curl -4 -s -H "API-Version: 3.5.1"'
+
+
+function destroy_session ()
+# Destroy session on exit.
+# Takes no arguments.
+{
+    [[ -n $TOKEN ]] && call_api Session DELETE >/dev/null
+}
+# Always trap EXIT to ensure session token is always invalidated.
+trap destroy_session EXIT
+
+
+function fail ()
+# Error handler.
+# Reports where the failure occurred (i.e., where it was called from).
+# Accepts a JSON object to report error information.
+{
+    echo "Failure at line ${BASH_LINENO[$i]}" >&2
+    json <<< "$*" >&2
+    exit 1
+}
+
+function warn ()
+# Pring string to STDERR
+{
+    echo "Warning: $*" >&2
+}
+
+
+function usage ()
+{
+    echo "usage: $(basename $0) [OPTIONS]"
+    echo "options:"
+    echo -e "\t-f ARG,    Required. Filename to read credentails from."
+    echo -e "\t-z ARG,    Optional. Fetch specified zone instead of all zones."
+    echo ""
+    echo "Credential file format:"
+    json <<< '{"customer_name":"example","user_name":"bob","password":"$ecret$"}'
+}
+
+
+function create_session ()
+# Create the initial session.
+# Takes no arguments, uses credential file passed in from the command line.
+{
+    JSON="$(curl ${DYNAPI}/Session/ -X POST -d @$FILE -H 'Content-Type: application/json')"
+    [[ $(json status <<< $JSON) == "success" ]] || fail "$JSON"
+    echo $(json data.token <<< $JSON)
+}
+
+function call_api ()
+# Call Dyn API
+# $1 The resource to request. This is everything after '/REST/'
+# $2 HTTP request method.
+{
+    RESOURCE=$1
+    METHOD=$2
+    JSON="$(curl ${DYNAPI}/${RESOURCE}/ -X ${METHOD} -H "Auth-Token: $TOKEN" -H 'Content-Type: application/json')"
+    [[ $(json status <<< $JSON) == "success" ]] || fail "$JSON"
+    json data <<< $JSON
+}
+
+function write_to_file()
+# Handles writing resource records to zone files.
+# Each record type has particular handling.
+# Accepts a DYN record in JSON format.
+{
+    RR="$*"
+    IFS='|' read zone ttl fqdn record_type <<< "$(json -a -d'|' zone ttl fqdn record_type <<< $RR)"
+    # Need to quote the fqdn because * will trigger pathname expansion.
+    rname=${fqdn//?(\.)${zone}}
+    printf "%-22s%6s IN %-6s" "${rname:-@}" $ttl $record_type
+    case $record_type in
+        A|AAAA )
+            json rdata.address <<< $RR
+            ;;
+        CNAME )
+            json rdata.cname <<< $RR
+            ;;
+        DHCID )
+            warn "Experimental type $record_type"
+            json rdata.digest <<< $RR
+            ;;
+        DNAME )
+            warn "Experimental type $record_type"
+            json rdata.dname <<< $RR
+            ;;
+        MX )
+            json -a rdata.preference rdata.exchange <<< $RR
+            ;;
+        NS )
+            json rdata.nsdname <<< $RR
+            ;;
+        NSAP )
+            warn "Experimental type $record_type"
+            json rdata.nsap <<< $RR
+            ;;
+        PTR )
+            json rdata.ptrdname <<< $RR
+            ;;
+        SPF )
+            warn "Experimental type $record_type"
+            json rdata.txtdata <<< $RR
+            ;;
+        SOA )
+            DATA=$(json -a rdata.mname rdata.rname rdata.serial rdata.refresh rdata.retry rdata.expire rdata.minimum <<< $RR)
+            printf "%s %s (\n%42s\n%42s\n%42s\n%42s\n%42s )\n\n" $DATA
+            ;;
+        SRV )
+            json -a rdata.priority rdata.weight rdata.port rdata.target <<< $RR
+            ;;
+        SSHFP )
+            json -a rdata.algorithm rdata.fptype rdata.fingerprint <<< $RR
+            ;;
+        TXT )
+            echo "\"$(json rdata.txtdata <<< $RR)\""
+            ;;
+        * )
+            warn "Unhandled record type!! >>${record_type}<<"
+            fail "$RR"
+            ;;
+    esac
+}
+
+while getopts "hf:z:" options; do
+    case $options in
+        f ) FILE="${OPTARG}";;
+        z ) ZONE_LIST="[\"/REST/Zone/${OPTARG}/\"]";;
+        h ) usage; exit;;
+        * ) usage; exit 1;;
+    esac
+done
+
+if [[ -z $FILE ]]
+then
+    echo "Missing required argument"
+    usage
+    false
+fi
+
+
+DYNAPI="https://api.dynect.net/REST"
+TOKEN=$(create_session)
+
+
+# If a single zone was not specified on the command line then pull
+# a list of zones for the account.
+if [[ -z $ZONE_LIST ]]
+then
+    ZONE_LIST=$(call_api Zone GET)
+fi
+
+# Main loop. This is where the work happens.
+for Z in $(json -a <<< $ZONE_LIST)
+do
+    #zone=$(cut -d / -f 4 <<< $Z)
+    IFS=/ read -a zone <<< "$Z"
+    ZONEFILE=db.${zone[3]}
+    # Truncate the zone file, if it exists
+    printf '$ORIGIN %s.\n\n' ${zone[3]} > $ZONEFILE
+    RECORDS=$(call_api AllRecord/${zone[3]} GET | json -a)
+    for record in $RECORDS
+    do
+        RR=$(call_api $(sed 's/^\/REST\///' <<< $record) GET)
+        write_to_file "$RR" >> $ZONEFILE
+    done
+done
