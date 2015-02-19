@@ -148,8 +148,7 @@ function write_to_file ()
             json rdata.ptrdname <<< "$RR"
             ;;
         SPF )
-            warn "Experimental type $record_type"
-            json rdata.txtdata <<< "$RR"
+            printf "\"%s\"\n" "$(json rdata.txtdata <<< "$RR")"
             ;;
         SOA )
             DATA=$(json -a rdata.mname rdata.rname rdata.serial rdata.refresh rdata.retry rdata.expire rdata.minimum <<< "$RR")
@@ -213,7 +212,8 @@ do
     fi
     echo -n "Fetching zone ${zone[3]}..."
     # Truncate the zone file, if it exists
-    printf '$ORIGIN %s.\n\n' "${zone[3]}" > "$ZONEFILE"
+    printf '; named-checkzone %s %s\n\n' "${zone[3]}" "$ZONEFILE" > "$ZONEFILE"
+    printf '$ORIGIN %s.\n\n' "${zone[3]}" >> "$ZONEFILE"
     RECORDS=$(call_api AllRecord/"${zone[3]}" GET | json -a)
     for record in $RECORDS
     do

@@ -1,0 +1,14 @@
+#!/bin/bash
+
+CONF="zones.conf"
+
+cat /dev/null > "$CONF"
+
+for file in db*
+do
+    zone=${file/db./}
+    printf 'zone "%s" {\n' $zone   >> "$CONF"
+    printf '    type master\n'     >> "$CONF"
+    printf '    file "%s"\n' $file >> "$CONF"
+    printf '};\n\n'                >> "$CONF"
+done
