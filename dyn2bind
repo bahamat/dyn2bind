@@ -5,19 +5,19 @@ shopt -s expand_aliases
 shopt -s extglob
 
 # Verify that necessary dependencies are available.
-if ! $(curl -V >/dev/null)
+if ! curl -V >/dev/null
 then
     echo "This program requires a functioning \`curl\` that can validate"
     echo "SSL certificates. This should be available from your local package"
     echo "management systsem."
 fi
 
-if ! $(json --version >/dev/null)
+if ! json --version >/dev/null
 then
     echo "This program requires jsontool, a node.js program available from npm."
-    (node --version 2>&1>/dev/null) || \
+    (node --version >/dev/null 2>&1 ) || \
     echo "Node.js is available from your local package manager or http://www.nodejs.org/."
-    (npm help 2>&1>/dev/null) || \
+    (npm help >/dev/null 2>&1) || \
     echo "npm is available from your local package manager or http://www.npm.org/."
     echo "Run \`npm install -g jsontool\`"
 fi
@@ -61,13 +61,13 @@ function warn ()
 
 function usage ()
 {
-    echo "usage: $(basename $0) [OPTIONS]"
+    echo "usage: $(basename "$0") [OPTIONS]"
     echo "options:"
     echo -e "\t-f ARG,    Required. Filename to read credentails from."
     echo -e "\t-z ARG,    Optional. Fetch specified zone instead of all zones."
     echo ""
     echo "Credential file format:"
-    json <<< '{"customer_name":"example","user_name":"bob","password":"$ecret$"}'
+    json <<< '{"customer_name":"example","user_name":"bob","password":"5ecret5"}'
 }
 
 
@@ -75,9 +75,9 @@ function create_session ()
 # Create the initial session.
 # Takes no arguments, uses credential file passed in from the command line.
 {
-    JSON="$(curl ${DYNAPI}/Session/ -X POST -d @$FILE -H 'Content-Type: application/json')"
-    [[ $(json status <<< $JSON) == "success" ]] || fail "$JSON"
-    echo $(json data.token <<< $JSON)
+    JSON="$(curl "${DYNAPI}/Session/" -X POST -d @"${FILE}" -H 'Content-Type: application/json')"
+    [[ $(json status <<< "$JSON") == "success" ]] || fail "$JSON"
+    json data.token <<< "$JSON"
 }
 
 function call_api ()
@@ -87,9 +87,9 @@ function call_api ()
 {
     RESOURCE=$1
     METHOD=$2
-    JSON="$(curl ${DYNAPI}/${RESOURCE}/ -X ${METHOD} -H "Auth-Token: $TOKEN" -H 'Content-Type: application/json')"
-    [[ $(json status <<< $JSON) == "success" ]] || fail "$JSON"
-    json data <<< $JSON
+    JSON="$(curl "${DYNAPI}"/"${RESOURCE}/" -X "${METHOD}" -H "Auth-Token: $TOKEN" -H 'Content-Type: application/json')"
+    [[ "$(json status <<< "$JSON")" == "success" ]] || fail "$JSON"
+    json data <<< "$JSON"
 }
 
 function write_to_file()
@@ -98,54 +98,54 @@ function write_to_file()
 # Accepts a DYN record in JSON format.
 {
     RR="$*"
-    IFS='|' read zone ttl fqdn record_type <<< "$(json -a -d'|' zone ttl fqdn record_type <<< $RR)"
+    IFS='|' read zone ttl fqdn record_type <<< "$(json -a -d'|' zone ttl fqdn record_type <<< "$RR")"
     # Need to quote the fqdn because * will trigger pathname expansion.
     rname=${fqdn//?(\.)${zone}}
-    printf "%-22s%6s IN %-6s" "${rname:-@}" $ttl $record_type
+    printf "%-22s%6s IN %-6s" "${rname:-@}" "$ttl" "$record_type"
     case $record_type in
         A|AAAA )
-            json rdata.address <<< $RR
+            json rdata.address <<< "$RR"
             ;;
         CNAME )
-            json rdata.cname <<< $RR
+            json rdata.cname <<< "$RR"
             ;;
         DHCID )
             warn "Experimental type $record_type"
-            json rdata.digest <<< $RR
+            json rdata.digest <<< "$RR"
             ;;
         DNAME )
             warn "Experimental type $record_type"
-            json rdata.dname <<< $RR
+            json rdata.dname <<< "$RR"
             ;;
         MX )
-            json -a rdata.preference rdata.exchange <<< $RR
+            json -a rdata.preference rdata.exchange <<< "$RR"
             ;;
         NS )
-            json rdata.nsdname <<< $RR
+            json rdata.nsdname <<< "$RR"
             ;;
         NSAP )
             warn "Experimental type $record_type"
-            json rdata.nsap <<< $RR
+            json rdata.nsap <<< "$RR"
             ;;
         PTR )
-            json rdata.ptrdname <<< $RR
+            json rdata.ptrdname <<< "$RR"
             ;;
         SPF )
             warn "Experimental type $record_type"
-            json rdata.txtdata <<< $RR
+            json rdata.txtdata <<< "$RR"
             ;;
         SOA )
-            DATA=$(json -a rdata.mname rdata.rname rdata.serial rdata.refresh rdata.retry rdata.expire rdata.minimum <<< $RR)
+            DATA=$(json -a rdata.mname rdata.rname rdata.serial rdata.refresh rdata.retry rdata.expire rdata.minimum <<< "$RR")
             printf "%s %s (\n%42s\n%42s\n%42s\n%42s\n%42s )\n\n" $DATA
             ;;
         SRV )
-            json -a rdata.priority rdata.weight rdata.port rdata.target <<< $RR
+            json -a rdata.priority rdata.weight rdata.port rdata.target <<< "$RR"
             ;;
         SSHFP )
-            json -a rdata.algorithm rdata.fptype rdata.fingerprint <<< $RR
+            json -a rdata.algorithm rdata.fptype rdata.fingerprint <<< "$RR"
             ;;
         TXT )
-            echo "\"$(json rdata.txtdata <<< $RR)\""
+            echo "\"$(json rdata.txtdata <<< "$RR")\""
             ;;
         * )
             warn "Unhandled record type!! >>${record_type}<<"
@@ -154,9 +154,10 @@ function write_to_file()
     esac
 }
 
-while getopts "hf:z:" options; do
+while getopts "hsf:z:" options; do
     case $options in
         f ) FILE="${OPTARG}";;
+        s ) SKIP=1;;
         z ) ZONE_LIST="[\"/REST/Zone/${OPTARG}/\"]";;
         h ) usage; exit;;
         * ) usage; exit 1;;
@@ -183,17 +184,17 @@ then
 fi
 
 # Main loop. This is where the work happens.
-for Z in $(json -a <<< $ZONE_LIST)
+for Z in $(json -a <<< "$ZONE_LIST")
 do
     #zone=$(cut -d / -f 4 <<< $Z)
     IFS=/ read -a zone <<< "$Z"
     ZONEFILE=db.${zone[3]}
     # Truncate the zone file, if it exists
-    printf '$ORIGIN %s.\n\n' ${zone[3]} > $ZONEFILE
-    RECORDS=$(call_api AllRecord/${zone[3]} GET | json -a)
+    printf '$ORIGIN %s.\n\n' "${zone[3]}" > "$ZONEFILE"
+    RECORDS=$(call_api AllRecord/"${zone[3]}" GET | json -a)
     for record in $RECORDS
     do
-        RR=$(call_api $(sed 's/^\/REST\///' <<< $record) GET)
-        write_to_file "$RR" >> $ZONEFILE
+        RR=$(call_api "$(sed 's/^\/REST\///' <<< "$record")" GET)
+        write_to_file "$RR" >> "$ZONEFILE"
     done
 done
