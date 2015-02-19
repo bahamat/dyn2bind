@@ -88,11 +88,28 @@ function call_api ()
     RESOURCE=$1
     METHOD=$2
     JSON="$(curl "${DYNAPI}"/"${RESOURCE}/" -X "${METHOD}" -H "Auth-Token: $TOKEN" -H 'Content-Type: application/json')"
+    [[ "$JSON" =~ /REST/Job/ ]] && JSON="$(get_job_results $JSON)"
     [[ "$(json status <<< "$JSON")" == "success" ]] || fail "$JSON"
     json data <<< "$JSON"
 }
 
-function write_to_file()
+function get_job_results ()
+# Get the result of a long running job
+# $1 The job query string: /REST/Job/:job_id
+{
+    local job_id
+    IFS=/ read -a job_id <<< "$1"
+
+    JSON='{"status": "incomplete"}'
+    while [[ $(json status <<< "$JSON") == "incomplete" ]]
+    do
+        sleep 1
+        JSON=$(curl "${DYNAPI}/Job/${job_id[3]}" -X GET -H "Auth-Token: $TOKEN" -H 'Content-Type: application/json')
+    done
+    json <<< "$JSON"
+}
+
+function write_to_file ()
 # Handles writing resource records to zone files.
 # Each record type has particular handling.
 # Accepts a DYN record in JSON format.
