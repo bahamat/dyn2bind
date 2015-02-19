@@ -189,6 +189,12 @@ do
     #zone=$(cut -d / -f 4 <<< $Z)
     IFS=/ read -a zone <<< "$Z"
     ZONEFILE=db.${zone[3]}
+    if [[ -f "$ZONEFILE" && -n "$SKIP" ]]
+    then
+        echo "Skipping ${zone[3]} because it already exists."
+        continue
+    fi
+    echo -n "Fetching zone ${zone[3]}..."
     # Truncate the zone file, if it exists
     printf '$ORIGIN %s.\n\n' "${zone[3]}" > "$ZONEFILE"
     RECORDS=$(call_api AllRecord/"${zone[3]}" GET | json -a)
@@ -197,4 +203,5 @@ do
         RR=$(call_api "$(sed 's/^\/REST\///' <<< "$record")" GET)
         write_to_file "$RR" >> "$ZONEFILE"
     done
+    echo "done."
 done
