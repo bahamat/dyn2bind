@@ -61,7 +61,7 @@ function warn ()
 
 function usage ()
 {
-    echo "usage: $(basename "$0") [OPTIONS]"
+    echo "usage: ${0##*/} [OPTIONS]"
     echo "options:"
     echo -e "\t-f ARG,    Required. Filename to read credentails from."
     echo -e "\t-z ARG,    Optional. Fetch specified zone instead of all zones."
